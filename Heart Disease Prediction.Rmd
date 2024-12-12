@@ -1,0 +1,672 @@
+---
+title: "Enhanced Heart Disease Data Mining Project"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+---
+
+<style>
+  h1 { font-size: 2.5em; }
+  h2 { font-size: 2em; }
+  h3 { font-size: 1.5em; }
+  p { font-size: 1.2em; line-height: 1.6; }
+  code { font-size: 1em; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { border: 1px solid #ddd; padding: 8px; }
+  th { background-color: #f2f2f2; text-align: center; }
+</style>
+
+# Introduction
+
+Heart disease is a critical global health issue. This project aims to analyze the Heart Disease Dataset to uncover patterns and factors influencing the presence of heart disease. The objectives are:
+1. Perform data preprocessing and exploratory data analysis (EDA).
+2. Apply clustering, classification, and association rule mining techniques.
+3. Visualize results and evaluate model performance.
+
+```{r setup}
+# Setup code
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+# Dataset Overview
+
+```{r dataset-overview, echo=TRUE}
+
+options(repos = c(CRAN = "https://cloud.r-project.org/"))
+
+# Load necessary libraries
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(cluster)
+library(arules)
+library(arulesViz)
+library(corrplot)
+library(ggcorrplot)
+library(ggcorrplot)
+library(dendextend)
+
+# Load the dataset
+heart_data <- read.csv("C:/Users/linga/Downloads/archive (5)/heart.csv")
+
+# Display dataset structure and summary
+str(heart_data)
+summary(heart_data)
+```
+
+# Data Preprocessing
+
+```{r data-preprocessing, echo=TRUE}
+
+# 1. Check for Missing Values
+missing_values <- colSums(is.na(heart_data))
+print(missing_values) # Display columns with missing values
+
+# If there are missing values, remove or impute them (e.g., median imputation)
+heart_data <- heart_data %>% mutate(across(where(is.numeric), ~ ifelse(is.na(.), median(., na.rm = TRUE), .)))
+
+# 2. Encode Categorical Variables
+# Convert `sex`, `cp`, `fbs`, `restecg`, `exang`, `slope`, `thal`, and `target` to factors
+heart_data <- heart_data %>%
+  mutate(
+    sex = as.factor(sex),
+    cp = as.factor(cp),
+    fbs = as.factor(fbs),
+    restecg = as.factor(restecg),
+    exang = as.factor(exang),
+    slope = as.factor(slope),
+    thal = as.factor(thal),
+    target = as.factor(target)
+  )
+
+# 3. Normalize Numeric Variables
+# Select numeric columns
+numeric_columns <- heart_data %>% select(where(is.numeric))
+
+# Apply scaling to numeric columns
+scaled_numeric <- numeric_columns %>% mutate(across(everything(), scale))
+
+# Combine scaled numeric data back with the original dataset
+heart_data_scaled <- heart_data %>%
+  select(-names(numeric_columns)) %>%
+  bind_cols(scaled_numeric)
+
+# Display the first few rows of the processed data
+print(head(heart_data_scaled))
+
+```
+
+# Exploratory Data Analysis (EDA)
+
+```{r exploratory-data-analysis, echo=TRUE}
+# Visualize target variable distribution
+
+
+# 1. Distribution of the Target Variable
+ggplot(heart_data, aes(x = factor(target))) +
+  geom_bar(fill = "steelblue") +
+  labs(title = "Distribution of Target Variable (Heart Disease Presence)",
+       x = "Target (0 = No Disease, 1 = Disease)",
+       y = "Count")
+
+# 2. Age Distribution
+ggplot(heart_data, aes(x = age)) +
+  geom_histogram(binwidth = 5, fill = "blue", color = "black", alpha = 0.7) +
+  labs(title = "Age Distribution of Patients", x = "Age", y = "Count") +
+  theme_minimal()
+
+# 3. Cholesterol vs Age
+ggplot(heart_data, aes(x = age, y = chol, color = factor(target))) +
+  geom_point(alpha = 0.7) +
+  labs(title = "Cholesterol vs Age (Colored by Target)",
+       x = "Age",
+       y = "Cholesterol") +
+  scale_color_manual(values = c("red", "green"), name = "Target") +
+  theme_minimal()
+
+
+```
+
+# Clustering Analysis
+
+## K-Means Clustering
+```{r kmeans-clustering, echo=TRUE}
+
+# Select numeric features for clustering
+numeric_columns <- heart_data %>% select(where(is.numeric))
+
+# Apply K-Means Clustering
+set.seed(123)  # For reproducibility
+kmeans_result <- kmeans(numeric_columns, centers = 3)  # Specify 3 clusters
+
+# Add cluster assignments to the original dataset
+heart_data$cluster <- as.factor(kmeans_result$cluster)
+
+# Visualize Clusters (e.g., Age vs Cholesterol)
+ggplot(heart_data, aes(x = age, y = chol, color = cluster)) +
+  geom_point(alpha = 0.7, size = 2) +
+  labs(title = "K-Means Clustering (Age vs Cholesterol)",
+       x = "Age",
+       y = "Cholesterol") +
+  theme_minimal() +
+  scale_color_manual(values = c("red", "blue", "green"), name = "Cluster")
+
+```
+
+K-Means Clustering Interpretation
+------------------------------------------------------------
+The clustering plot reveals three distinct clusters based on Age and Cholesterol:
+ 
+1. **Cluster 1 (Red)**:
+     - Patients with higher cholesterol levels, spanning across different ages.
+     - Likely represents individuals with elevated risk due to high cholesterol.
+
+2. **Cluster 2 (Green)**:
+     - Patients with moderate cholesterol levels, mostly middle-aged (40–60 years).
+     - Reflects average cholesterol levels for this age range.
+
+3. **Cluster 3 (Blue)**:
+     - Patients with lower cholesterol levels, predominantly younger (30–50 years).
+     - Likely represents healthier individuals with minimal cholesterol-related risks.
+
+  Insights:
+  - Cholesterol appears to be a stronger factor in clustering than age.
+  - Further analysis using additional features, such as heart rate (thalach) or resting blood pressure,
+    may refine these clusters and offer more actionable insights.
+
+  This clustering analysis provides a foundation for identifying patient subgroups and
+  tailoring healthcare interventions based on age and cholesterol profiles.
+
+
+
+## GMM Clustering
+```{r hierarchical-clustering, echo=TRUE}
+
+# Install and load required libraries
+if (!require("mclust")) install.packages("mclust")
+if (!require("plotly")) install.packages("plotly")
+library(mclust)
+library(plotly)
+library(dplyr)
+
+# Select three variables for clustering
+selected_columns <- heart_data %>% select(thalach, oldpeak, trestbps)
+
+# Scale the variables
+scaled_columns <- scale(selected_columns)
+
+# Apply GMM with fewer clusters (e.g., 3 clusters)
+set.seed(123)
+gmm_model <- Mclust(scaled_columns, G = 3)  # Set the number of clusters to 3
+
+# Add cluster labels to the dataset
+heart_data$gmm_cluster <- as.factor(gmm_model$classification)
+
+# Summarize the characteristics of each cluster
+cluster_summary <- aggregate(selected_columns, 
+                              by = list(Cluster = gmm_model$classification), 
+                              mean)
+print(cluster_summary)
+
+# Create a 3D scatter plot with 3 clusters
+plot_ly(heart_data,
+        x = ~thalach,
+        y = ~oldpeak,
+        z = ~trestbps,
+        color = ~gmm_cluster,
+        colors = c("red", "blue", "green"),
+        type = "scatter3d",
+        mode = "markers") %>%
+  layout(title = "3D GMM Clustering (Thalach, Oldpeak, Trestbps)",
+         scene = list(
+           xaxis = list(title = "Maximum Heart Rate (Thalach)"),
+           yaxis = list(title = "ST Depression (Oldpeak)"),
+           zaxis = list(title = "Resting Blood Pressure (Trestbps)")
+         ))
+
+
+
+
+```
+GMM Clustering Interpretation
+------------------------------------------------------------
+The 3D GMM clustering plot visualizes the clusters based on the following features:
+  - **X-axis**: ST Depression (Oldpeak) – Indicates the level of ST depression induced by exercise.
+  - **Y-axis**: Resting Blood Pressure (Trestbps) – The resting blood pressure of the patient.
+  - **Z-axis**: Maximum Heart Rate Achieved (Thalach).
+
+  **Cluster Analysis**:
+  1. **Cluster 1 (Red)**:
+     - Patients with **higher ST depression (3.09)** and **moderate-to-high resting blood pressure (138.63)**.
+     - This cluster likely represents individuals with significant cardiac stress or those at higher risk of heart conditions.
+ 
+  2. **Cluster 2 (Blue)**:
+     - Patients with **moderate ST depression (1.15)** and slightly lower heart rate and blood pressure compared to Cluster 1.
+     - Represents a medium-risk group with some signs of cardiac stress but less severe.
+ 
+  3. **Cluster 3 (Green)**:
+     - Patients with **low ST depression (0.10)** and the **highest heart rate (163.01)** during exercise, along with the lowest blood pressure (125.12).
+     - Likely represents healthier individuals or those with better cardiac performance under stress.
+
+  **Insights**:
+  - Cluster 1 is the high-risk group, requiring closer monitoring and potential interventions.
+  - Cluster 2 represents a transition group, suggesting medium risk.
+  - Cluster 3 represents the low-risk group with stable cardiac metrics.
+
+  This analysis helps in identifying patient subgroups that may benefit from targeted medical care or lifestyle adjustments.
+
+
+# Classification Analysis
+
+## Decision Tree
+```{r decision-tree, echo=TRUE}
+
+# Install and load required libraries
+if (!require("rpart")) install.packages("rpart")
+if (!require("rpart.plot")) install.packages("rpart.plot")
+library(rpart)
+library(rpart.plot)
+
+# Step 1: Prepare the data
+# Ensure the target variable is a factor
+heart_data$target <- as.factor(heart_data$target)
+
+# Split the data into training and testing sets
+set.seed(123)
+train_index <- sample(1:nrow(heart_data), 0.7 * nrow(heart_data))
+train_data <- heart_data[train_index, ]
+test_data <- heart_data[-train_index, ]
+
+# Step 2: Train the Decision Tree Model
+decision_tree_model <- rpart(target ~ ., data = train_data, method = "class")
+
+# Step 3: Visualize the Decision Tree
+rpart.plot(decision_tree_model, type = 4, extra = 104, 
+           main = "Decision Tree for Heart Disease Prediction")
+
+# Step 4: Evaluate the Model
+# Make predictions on the test set
+predictions <- predict(decision_tree_model, test_data, type = "class")
+
+# Create a confusion matrix
+confusion_matrix <- table(Predicted = predictions, Actual = test_data$target)
+
+# Print the confusion matrix
+print(confusion_matrix)
+
+# Calculate accuracy
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+cat("Accuracy of the Decision Tree: ", round(accuracy * 100, 2), "%\n")
+
+
+
+```
+  Decision Tree Interpretation
+ ------------------------------------------------------------
+  The decision tree is used to predict the presence or absence of heart disease (target variable) 
+  based on various features. Here's the interpretation of the tree:
+
+  **Root Node**:
+  - The tree starts with the variable `thal` (Thalassemia levels), which has the strongest influence 
+    on the prediction. This is evident because it's the first split.
+
+  **Key Splits**:
+  1. **Left Branch (Thal = 1 or 3)**:
+     - The next important variable is `op` (Oldpeak, ST depression during exercise).
+     - Patients with `op = 0` are further analyzed based on `dbscan_cluster` (clustering results).
+     - Patients with `op > 0` are analyzed using `thalach` (Maximum heart rate achieved):
+         - If `thalach < 161`, the likelihood of heart disease increases.
+         - If `thalach >= 161`, the likelihood of heart disease decreases.
+
+  2. **Right Branch (Thal = 2)**:
+     - Splits further based on `op` (ST depression) and clustering variables, 
+       such as `cluster_new` and `dbscan_cluster`.
+
+  **Leaf Nodes**:
+  - Leaf nodes (bottom nodes) represent the final predictions:
+    - **Green Nodes**: Predict heart disease (target = 1).
+    - **Blue Nodes**: Predict no heart disease (target = 0).
+    - Each leaf displays the percentage of samples in each class and the total samples.
+
+  **Insights**:
+  - The variables `thal`, `op`, and `thalach` are the strongest predictors of heart disease in this dataset.
+  - Patients with higher `op` values and lower `thalach` values are more likely to have heart disease.
+  - Clustering features like `dbscan_cluster` and `cluster_new` also contribute to decision-making in certain branches.
+
+  **Strengths of the Decision Tree**:
+  - The tree provides interpretable rules for identifying patients at risk of heart disease.
+  - The hierarchical nature of the tree allows for straightforward predictions based on feature thresholds.
+
+  **Next Steps**:
+  - Further analyze false positives and false negatives from the model's predictions.
+  - Experiment with ensemble methods like Random Forest for potentially better performance.
+
+
+## Random Forest
+```{r random-forest, echo=TRUE}
+
+# Install and load required libraries
+if (!require("randomForest")) install.packages("randomForest")
+if (!require("caret")) install.packages("caret")
+library(randomForest)
+library(caret)
+
+# Step 1: Prepare the data
+# Ensure the target variable is a factor
+heart_data$target <- as.factor(heart_data$target)
+
+# Split the data into training and testing sets
+set.seed(123)
+train_index <- sample(1:nrow(heart_data), 0.7 * nrow(heart_data))
+train_data <- heart_data[train_index, ]
+test_data <- heart_data[-train_index, ]
+
+# Step 2: Train the Random Forest Model
+set.seed(123)
+random_forest_model <- randomForest(target ~ ., data = train_data, ntree = 100, importance = TRUE)
+
+# Print model summary
+print(random_forest_model)
+
+# Step 3: Evaluate the Model
+# Make predictions on the test set
+rf_predictions <- predict(random_forest_model, test_data)
+
+# Create a confusion matrix
+confusion_matrix <- confusionMatrix(rf_predictions, test_data$target)
+print(confusion_matrix)
+
+# Calculate F1 score
+conf_matrix_table <- confusion_matrix$table
+precision <- diag(conf_matrix_table) / rowSums(conf_matrix_table)
+recall <- diag(conf_matrix_table) / colSums(conf_matrix_table)
+
+# Handle cases with NaN (e.g., division by zero)
+precision[is.na(precision)] <- 0
+recall[is.na(recall)] <- 0
+
+f1_score <- 2 * (precision * recall) / (precision + recall)
+f1_score[is.na(f1_score)] <- 0 # Handle NaN for F1 score
+
+# Display F1 scores for each class
+f1_scores <- data.frame(Class = names(f1_score), F1_Score = f1_score)
+print(f1_scores)
+
+# Add F1 score to the confusion matrix output
+detailed_metrics <- data.frame(
+  Class = names(f1_score),
+  Precision = precision,
+  Recall = recall,
+  F1_Score = f1_score
+)
+print("Detailed Metrics:")
+print(detailed_metrics)
+
+# Step 4: Visualize Feature Importance
+if (!require("ggplot2")) install.packages("ggplot2")
+library(ggplot2)
+
+# Extract feature importance
+importance <- random_forest_model$importance
+feature_importance <- data.frame(Feature = rownames(importance),
+                                 Importance = importance[, "MeanDecreaseGini"])
+
+# Plot the feature importance
+ggplot(feature_importance, aes(x = reorder(Feature, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Feature Importance (Random Forest)",
+       x = "Features",
+       y = "Mean Decrease in Gini") +
+  theme_minimal()
+
+
+
+```
+
+  Random Forest Interpretation
+  ------------------------------------------------------------
+  **Feature Importance**
+  The feature importance plot highlights the significance of each feature in predicting heart disease.
+   - **Most Important Features**:
+   - **thal (Thalassemia)**: The strongest predictor of heart disease, showing its critical role.
+   - **cp (Chest Pain Type)**: The second most important feature, indicating the significance of chest pain type.
+   - **ca (Number of Major Vessels Colored by Fluoroscopy)**: Strongly associated with heart disease.
+   - **Moderately Important Features**:
+   - **thalach (Maximum Heart Rate Achieved)** and **age** play a notable role in predictions.
+   - **Least Important Features**:
+   - Features like **fbs (Fasting Blood Sugar)** and clustering-related features (`hc_cluster_selected`) 
+      contribute minimally and might be candidates for removal in future models.
+
+
+# Association Analysis
+
+## Apriori Algorithm
+```{r apriori-algorithm, echo=TRUE}
+
+
+# Install and load required libraries
+if (!require("arules")) install.packages("arules")
+library(arules)
+
+# Step 1: Prepare the data
+# Ensure that numeric columns are properly converted
+heart_data$age <- as.numeric(as.character(heart_data$age))
+heart_data$chol <- as.numeric(as.character(heart_data$chol))
+heart_data$thalach <- as.numeric(as.character(heart_data$thalach))
+
+# Binning numeric variables into categories
+heart_data$age <- cut(heart_data$age, breaks = c(0, 40, 55, 100), labels = c("Young", "Middle-aged", "Old"))
+heart_data$chol <- cut(heart_data$chol, breaks = c(0, 200, 300, 600), labels = c("Low", "Moderate", "High"))
+heart_data$thalach <- cut(heart_data$thalach, breaks = c(0, 120, 160, 250), labels = c("Low", "Moderate", "High"))
+
+# Convert the dataset to a transaction format
+heart_transactions <- as(heart_data, "transactions")
+
+# View a summary of the transactions
+summary(heart_transactions)
+
+# Step 2: Apply the Apriori Algorithm
+rules <- apriori(heart_transactions, 
+                 parameter = list(supp = 0.1, conf = 0.8, minlen = 2))
+
+# Step 3: Summarize the Rules
+# Summary of all generated rules
+cat("Summary of Generated Rules:\n")
+summary(rules)
+
+# Step 4: Filter and Analyze Rules
+# Filter rules with high lift and confidence
+strong_rules <- subset(rules, lift > 1.5 & confidence > 0.9)
+cat("\nFiltered Rules with Lift > 1.5 and Confidence > 0.9:\n")
+inspect(strong_rules)
+
+# Sort rules by lift and display the top 10
+sorted_rules <- sort(rules, by = "lift", decreasing = TRUE)
+cat("\nTop 10 Rules Sorted by Lift:\n")
+inspect(head(sorted_rules, n = 10))
+
+# Step 5: Extract Antecedents and Consequents
+cat("\nAntecedents and Consequents of Top Rules:\n")
+for (i in 1:min(10, length(sorted_rules))) {
+  rule <- sorted_rules[i]
+  cat("Rule", i, ": ", labels(lhs(rule)), "=>", labels(rhs(rule)), "\n")
+}
+
+
+
+
+
+```
+  Interpretation of Apriori Algorithm Results
+  ------------------------------------------------------------
+  **Summary of Quality Measures**
+  - **Support**: Indicates the proportion of transactions that contain a given itemset.
+    - Min: 0.1005 – The least frequent itemset is present in about 10% of transactions.
+    - Mean: 0.1430 – On average, itemsets appear in about 14.3% of transactions.
+    - Max: 0.5873 – The most frequent itemset is present in about 58.73% of transactions.
+    - **Confidence**: Represents the probability that the consequent occurs given the antecedent.
+    - Min: 0.8000 – All rules have at least an 80% confidence.
+    - Mean: 0.8782 – On average, rules have 87.82% confidence, indicating strong predictive ability.
+    - Max: 1.0000 – Some rules have perfect confidence (100%), meaning the consequent always occurs when the antecedent is true.
+    - **Lift**: The ratio of observed confidence to expected confidence if antecedent and consequent were independent.
+    - Min: 0.9404 – The weakest rule adds little value (below lift=1 means no added predictive value).
+    - Mean: 1.4718 – Rules are 1.47 times more likely to occur than expected by chance.
+    - Max: 2.8947 – The strongest rule is almost 2.9 times more likely to occur than by random chance.
+
+  **Filtered Rules (Lift > 1.5, Confidence > 0.9)**
+  - Rules with high lift and confidence are considered significant and actionable.
+  - Example Rule:
+  - Rule 1: {sex=1, exang=0, slope=2, thal=2, gmm_cluster=3} => {oldpeak=[0,0.1)}
+  - **Interpretation**: Male patients (sex=1) without exercise-induced angina (exang=0), a slope value of 2, 
+        thalassemia type 2, and belonging to GMM cluster 3 are highly likely to have an oldpeak value in the range [0, 0.1).
+      - **Lift**: 2.8947 – This rule is almost 2.9 times more likely to occur than by chance.
+      - **Confidence**: 100% – The consequent always occurs when the antecedent conditions are true.
+
+  **Top 10 Rules Sorted by Lift**
+  - These rules are the strongest associations in the data:
+    1. **Rule 1**: {sex=1, exang=0, slope=2, thal=2, gmm_cluster=3} => {oldpeak=[0,0.1)}
+       - Strongest rule with the highest lift (2.8947).
+       - Male patients without exercise-induced angina, specific slope, and thalassemia conditions are strongly associated 
+         with low ST depression (oldpeak in [0, 0.1)).
+    2. **Rule 2**: {gmm_cluster=1} => {oldpeak=[1.4,6.2]}
+       - Patients in GMM cluster 1 are strongly associated with higher ST depression values (oldpeak in [1.4, 6.2]).
+    3. **Rule 3**: {thal=3, gmm_cluster=1} => {oldpeak=[1.4,6.2]}
+       - Patients with thalassemia type 3 and belonging to GMM cluster 1 also show a strong association with high ST depression.
+    4. Remaining rules (4-10) further explore relationships between clustering results and key patient attributes.
+
+  **Insights**
+  - Key Features: GMM clusters, sex, exercise-induced angina (exang), slope, and thalassemia (thal) are the most predictive features.
+  - Strong Rules: Focus on rules with high lift and confidence for actionable insights.
+  - Clinical Relevance: These rules can help clinicians identify high-risk patients and tailor interventions.
+
+  **Next Steps**
+  - Validate rules on a test dataset or through cross-validation.
+  - Integrate these rules into clinical decision-making tools.
+  - Refine data categories or explore additional features for deeper insights.
+
+
+# FP-Growth analysis 
+
+```{r}
+
+# Install and load required libraries
+if (!require("arules")) install.packages("arules")
+library(arules)
+
+# Step 1: Prepare the data
+# Ensure numeric columns are properly converted
+heart_data$age <- as.numeric(as.character(heart_data$age))
+heart_data$chol <- as.numeric(as.character(heart_data$chol))
+heart_data$thalach <- as.numeric(as.character(heart_data$thalach))
+
+# Bin numeric variables into categories
+heart_data$age <- cut(heart_data$age, breaks = c(0, 40, 55, 100), labels = c("Young", "Middle-aged", "Old"))
+heart_data$chol <- cut(heart_data$chol, breaks = c(0, 200, 300, 600), labels = c("Low", "Moderate", "High"))
+heart_data$thalach <- cut(heart_data$thalach, breaks = c(0, 120, 160, 250), labels = c("Low", "Moderate", "High"))
+
+# Convert the dataset to transactions
+heart_transactions <- as(heart_data, "transactions")
+
+# View a summary of the transactions
+cat("Transaction Summary:\n")
+summary(heart_transactions)
+
+# Step 2: Apply FP-Growth (via Apriori function)
+rules <- apriori(heart_transactions, 
+                 parameter = list(supp = 0.1, conf = 0.8, target = "rules"))
+
+# View a summary of the rules
+cat("\nRules Summary:\n")
+summary(rules)
+
+# Step 3: Filter and Analyze Rules
+# Filter rules with high lift and confidence
+strong_rules <- subset(rules, lift > 1.5 & confidence > 0.9)
+cat("\nFiltered Rules with Lift > 1.5 and Confidence > 0.9:\n")
+inspect(strong_rules)
+
+# Sort rules by lift and display the top 10
+sorted_rules <- sort(rules, by = "lift", decreasing = TRUE)
+cat("\nTop 10 Rules Sorted by Lift:\n")
+inspect(head(sorted_rules, n = 10))
+
+# Extract Antecedents and Consequents for clarity
+cat("\nAntecedents and Consequents of Top Rules:\n")
+for (i in 1:min(10, length(sorted_rules))) {
+  rule <- sorted_rules[i]
+  cat("Rule", i, ": ", labels(lhs(rule)), "=>", labels(rhs(rule)), "\n")
+}
+
+
+
+```
+
+  Interpretation of FP-Growth Analysis
+  ------------------------------------------------------------
+  **Summary of Quality Measures**
+  - **Support**: Indicates the proportion of transactions that contain a given itemset.
+    - Min: 0.1005 – The least frequent itemset appears in about 10% of the transactions.
+    - Median: 0.1278 – Half of the rules are supported by at least 12.78% of transactions.
+    - Mean: 0.1432 – On average, the itemsets appear in about 14.32% of transactions.
+    - Max: 0.8507 – The most frequent itemset is present in about 85.07% of transactions.
+
+  - **Confidence**: Represents the probability of the consequent occurring given the antecedent.
+    - Min: 0.8000 – All rules have at least 80% confidence, showing strong reliability.
+    - Median: 0.8750 – Half of the rules have a confidence greater than or equal to 87.5%.
+    - Mean: 0.8782 – On average, the rules have 87.82% confidence.
+    - Max: 1.0000 – Some rules have perfect confidence (100%), meaning the consequent always occurs when the antecedent is present.
+
+  - **Lift**: The ratio of observed confidence to expected confidence under independence.
+    - Min: 0.9404 – Some rules add minimal predictive value.
+    - Median: 1.3694 – Half of the rules improve predictive accuracy by at least 36.94%.
+    - Mean: 1.4716 – On average, the rules improve predictive accuracy by 47.16%.
+    - Max: 2.8947 – The strongest rule is almost 2.9 times more likely to occur than by chance.
+
+    - **Count**: The number of transactions supporting each rule.
+    - Min: 103 – The least frequent rule appears in 103 transactions.
+    - Median: 131 – Half of the rules appear in at least 131 transactions.
+#   - Max: 872 – The most frequent rule appears in 872 transactions.
+
+ ------------------------------------------------------------
+  **Filtered Rules (Lift > 1.5, Confidence > 0.9)**
+      - Filtering rules based on Lift > 1.5 and Confidence > 0.9 identifies the strongest associations.
+      - Example of a strong rule:
+      - Rule 1: {sex=1, exang=0, slope=2, thal=2, gmm_cluster=3} => {oldpeak=[0,0.1)}
+  - **Interpretation**: Male patients (sex=1) without exercise-induced angina (exang=0), a slope value of 2, 
+        thalassemia type 2, and belonging to GMM cluster 3 are strongly associated with having an ST depression value 
+        (`oldpeak`) in the range [0, 0.1).
+      - **Lift**: 2.8947 – This rule is 2.89 times more likely to occur than by random chance.
+      - **Confidence**: 100% – The consequent (oldpeak=[0,0.1)) always occurs when the antecedent conditions are true.
+
+  ------------------------------------------------------------
+  **Top 10 Rules Sorted by Lift**
+  1. Rule 1: {sex=1, exang=0, slope=2, thal=2, gmm_cluster=3} => {oldpeak=[0,0.1)}
+     - Highest lift (2.8947) and perfect confidence (100%).
+     - Indicates a very strong association for male patients with specified characteristics.
+ 
+  2. Rule 2: {gmm_cluster=1} => {oldpeak=[1.4,6.2]}
+     - Patients in GMM cluster 1 are highly likely to have ST depression values in the range [1.4, 6.2].
+ 
+  3. Rule 3: {thal=3, gmm_cluster=1} => {oldpeak=[1.4,6.2]}
+     - Patients with thalassemia type 3 and in GMM cluster 1 are strongly associated with higher ST depression values.
+
+  4-10: Other rules focus on relationships involving cluster assignments and patient attributes like slope, ca, restecg, and target.
+
+  ------------------------------------------------------------
+  **Insights**
+  - **Key Predictors**: Patient sex, exercise-induced angina (exang), slope, thalassemia type, and clustering results 
+    (GMM cluster assignments) are critical for predicting ST depression (`oldpeak`).
+  - **Actionable Rules**: The top rules with high lift and confidence provide actionable insights for identifying 
+    specific patient profiles strongly associated with certain medical outcomes.
+  - **Clinical Implications**: These associations can guide healthcare providers in targeting high-risk groups for 
+    further investigation or tailored interventions.
+
+
+
+
+# Summary and Conclusion
+
+The analysis applied multiple clustering (K-Means, Hierarchical), classification (Decision Tree, Random Forest), and association rule techniques (Apriori). The results provide insights into key factors influencing heart disease and potential predictive patterns. Further enhancements could involve testing additional datasets and techniques.
